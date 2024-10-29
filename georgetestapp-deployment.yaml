@@ -1,0 +1,60 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: georgetestapp
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: georgetestapp
+  namespace: georgetestapp
+  labels:
+    app: georgetestapp
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: georgetestapp
+  template:
+    metadata:
+      labels:
+        app: georgetestapp
+    spec:
+      containers:
+      - name: georgetestapp
+        image: grey1/georgedemoapp:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+        command: ["/app/startup.sh"] # Ensure it uses the startup script
+        env:
+        - name: ALLOY_LOG_ENDPOINT
+          value: "grafana-alloy.georgetestapp.svc.cluster.local:4318"
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "1000m"
+        volumeMounts:
+        - name: log-volume
+          mountPath: /var/log # Ensure logs are written to this directory
+      volumes:
+      - name: log-volume
+        emptyDir: {}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: georgetestapp-service
+  namespace: georgetestapp
+  labels:
+    app: georgetestapp
+spec:
+  selector:
+    app: georgetestapp
+  ports:
+    - protocol: TCP
+      port: 8080
+      targetPort: 8080
+  type: ClusterIP

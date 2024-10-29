@@ -1,0 +1,4 @@
+k get svc -n georgetestapp
+NAME                    TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)                                AGE
+georgetestapp-service   ClusterIP   172.20.62.61    <none>        8080/TCP                               35h
+grafana-alloy           ClusterIP   172.20.67.223   <none>        12345/TCP,4318/TCP,4317/TCP,3100/TCP   31h

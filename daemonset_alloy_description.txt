@@ -1,0 +1,63 @@
+ame:           grafana-alloy
+Selector:       app.kubernetes.io/instance=grafana-alloy,app.kubernetes.io/name=alloy
+Node-Selector:  <none>
+Labels:         app.kubernetes.io/instance=grafana-alloy
+                app.kubernetes.io/managed-by=Helm
+                app.kubernetes.io/name=alloy
+                app.kubernetes.io/part-of=alloy
+                app.kubernetes.io/version=v1.4.3
+                helm.sh/chart=alloy-0.9.2
+Annotations:    deprecated.daemonset.template.generation: 25
+                meta.helm.sh/release-name: grafana-alloy
+                meta.helm.sh/release-namespace: georgetestapp
+Desired Number of Nodes Scheduled: 8
+Current Number of Nodes Scheduled: 8
+Number of Nodes Scheduled with Up-to-date Pods: 8
+Number of Nodes Scheduled with Available Pods: 8
+Number of Nodes Misscheduled: 0
+Pods Status:  8 Running / 0 Waiting / 0 Succeeded / 0 Failed
+Pod Template:
+  Labels:           app.kubernetes.io/instance=grafana-alloy
+                    app.kubernetes.io/name=alloy
+  Annotations:      kubectl.kubernetes.io/default-container: alloy
+                    kubectl.kubernetes.io/restartedAt: 2024-10-28T14:54:20-07:00
+  Service Account:  grafana-alloy
+  Containers:
+   alloy:
+    Image:      docker.io/grafana/alloy:v1.4.3
+    Port:       12345/TCP
+    Host Port:  0/TCP
+    Args:
+      run
+      /etc/alloy/config.alloy
+      --storage.path=/tmp/alloy
+      --server.http.listen-addr=0.0.0.0:12345
+      --server.http.ui-path-prefix=/
+      --stability.level=generally-available
+    Readiness:  http-get http://:12345/-/ready delay=10s timeout=1s period=10s #success=1 #failure=3
+    Environment:
+      ALLOY_DEPLOY_MODE:  helm
+      HOSTNAME:            (v1:spec.nodeName)
+    Mounts:
+      /etc/alloy from config (rw)
+   config-reloader:
+    Image:      ghcr.io/jimmidyson/configmap-reload:v0.12.0
+    Port:       <none>
+    Host Port:  <none>
+    Args:
+      --volume-dir=/etc/alloy
+      --webhook-url=http://localhost:12345/-/reload
+    Requests:
+      cpu:        1m
+      memory:     5Mi
+    Environment:  <none>
+    Mounts:
+      /etc/alloy from config (rw)
+  Volumes:
+   config:
+    Type:          ConfigMap (a volume populated by a ConfigMap)
+    Name:          grafana-alloy
+    Optional:      false
+  Node-Selectors:  <none>
+  Tolerations:     <none>
+Events:            <none>

@@ -1,0 +1,117 @@
+///////////////////////////////////////////////////////////////////////////////
+// General Logging Configuration
+
+logging {
+  level  = "debug"
+  format = "logfmt"
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+// Tracing Configuration
+
+// OTLP receiver to receive traces.
+otelcol.receiver.otlp "default" {
+  grpc {
+    endpoint = "0.0.0.0:4317"
+  }
+  http {
+    endpoint = "0.0.0.0:4318"
+  }
+
+  output {
+    traces = [otelcol.connector.spanlogs.default.input]
+  }
+}
+
+
+
+otelcol.connector.spanlogs "default" {
+  spans              = true
+  roots              = true
+  processes          = true
+  span_attributes = [ "http.method", "http.target", "http.status_code" ]
+  output {
+    logs = [otelcol.exporter.otlphttp.default.input]
+  }
+}
+
+// OTLP Exporter to send traces to Tempo.
+otelcol.exporter.otlphttp "default" {
+  client {
+    auth = otelcol.auth.headers.tempo.handler
+    endpoint = "http://singletempo.monitoring.svc.cluster.local:4318"
+    tls {
+      insecure             = true
+      insecure_skip_verify = true
+    }
+  }
+}
+
+otelcol.auth.headers "tempo" {
+    header {
+        key = "Authorization"
+        value = "testkeyhere"
+    }
+}
+
+
+discovery.kubernetes "pods" {
+  role = "pod"
+}
+
+loki.source.kubernetes "pods" {
+  targets    = discovery.kubernetes.pods.targets
+  forward_to = [loki.write.local.receiver]
+}
+
+
+
+local.file_match "local_files" {
+     path_targets = [{"__path__" = "/var/log/*.log"}]
+     sync_period = "5s"
+}
+
+loki.source.file "log_scrape" {
+    targets    = local.file_match.local_files.targets
+    forward_to = [loki.process.filter_logs.receiver]
+    tail_from_end = true
+}
+
+loki.process "filter_logs" {
+    stage.drop {
+        source = ""
+        expression  = ".*Connection closed by authenticating user root"
+        drop_counter_reason = "noisy"
+      }
+    forward_to = [loki.write.local.receiver]
+}
+
+
+otelcol.connector.spanlogs "lokispan" {
+  spans              = true
+  roots              = true
+  processes          = true
+  labels             = ["http.method", "http.target"]
+  span_attributes = ["http.method", "http.target"]
+
+
+  output {
+    logs = [otelcol.exporter.loki.default.input]
+  }
+}
+
+
+otelcol.exporter.loki "default" {
+  forward_to = [loki.write.local.receiver]
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://loki-gateway.monitoring.svc.cluster.local/loki/api/v1/push"
+  }
+}
+
+
+
+

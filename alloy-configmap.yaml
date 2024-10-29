@@ -1,0 +1,130 @@
+apiVersion: v1
+data:
+  config.alloy: |+
+    ///////////////////////////////////////////////////////////////////////////////
+    // General Logging Configuration
+
+    logging {
+      level  = "debug"
+      format = "logfmt"
+    }
+
+
+    ///////////////////////////////////////////////////////////////////////////////
+    // Tracing Configuration
+
+    // OTLP receiver to receive traces.
+    otelcol.receiver.otlp "default" {
+      grpc {
+        endpoint = "0.0.0.0:4317"
+      }
+      http {
+        endpoint = "0.0.0.0:4318"
+      }
+
+      output {
+        traces = [otelcol.connector.spanlogs.default.input]
+      }
+    }
+
+
+
+    otelcol.connector.spanlogs "default" {
+      spans              = true
+      roots              = true
+      processes          = true
+      span_attributes = [ "http.method", "http.target", "http.status_code" ]
+      output {
+        logs = [otelcol.exporter.otlphttp.default.input]
+      }
+    }
+
+    // OTLP Exporter to send traces to Tempo.
+    otelcol.exporter.otlphttp "default" {
+      client {
+        auth = otelcol.auth.headers.tempo.handler
+        endpoint = "http://singletempo.monitoring.svc.cluster.local:4318"
+        tls {
+          insecure             = true
+          insecure_skip_verify = true
+        }
+      }
+    }
+
+    otelcol.auth.headers "tempo" {
+        header {
+            key = "Authorization"
+            value = "testkeyhere"
+        }
+    }
+
+
+    discovery.kubernetes "pods" {
+      role = "pod"
+    }
+
+    loki.source.kubernetes "pods" {
+      targets    = discovery.kubernetes.pods.targets
+      forward_to = [loki.write.local.receiver]
+    }
+
+
+
+    local.file_match "local_files" {
+         path_targets = [{"__path__" = "/var/log/*.log"}]
+         sync_period = "5s"
+    }
+
+    loki.source.file "log_scrape" {
+        targets    = local.file_match.local_files.targets
+        forward_to = [loki.process.filter_logs.receiver]
+        tail_from_end = true
+    }
+
+    loki.process "filter_logs" {
+        stage.drop {
+            source = ""
+            expression  = ".*Connection closed by authenticating user root"
+            drop_counter_reason = "noisy"
+          }
+        forward_to = [loki.write.local.receiver]
+    }
+
+
+    otelcol.connector.spanlogs "lokispan" {
+      spans              = true
+      roots              = true
+      processes          = true
+      labels             = ["http.method", "http.target"]
+      span_attributes = ["http.method", "http.target"]
+
+
+      output {
+        logs = [otelcol.exporter.loki.default.input]
+      }
+    }
+
+
+    otelcol.exporter.loki "default" {
+      forward_to = [loki.write.local.receiver]
+    }
+
+    loki.write "local" {
+      endpoint {
+        url = "http://loki-gateway.monitoring.svc.cluster.local/loki/api/v1/push"
+      }
+    }
+
+
+
+
+kind: ConfigMap
+metadata:
+  annotations:
+    kubectl.kubernetes.io/last-applied-configuration: |
+      {"apiVersion":"v1","data":{"config.alloy":"///////////////////////////////////////////////////////////////////////////////\n// General Logging Configuration\n\nlogging {\n  level  = \"debug\"\n  format = \"logfmt\"\n}\n\n\n///////////////////////////////////////////////////////////////////////////////\n// Tracing Configuration\n\n// OTLP receiver to receive traces.\notelcol.receiver.otlp \"default\" {\n  grpc {\n    endpoint = \"0.0.0.0:4317\"\n  }\n  http {\n    endpoint = \"0.0.0.0:4318\"\n  }\n\n  output {\n    traces = [otelcol.connector.spanlogs.default.input]\n  }\n}\n\n\n\notelcol.connector.spanlogs \"default\" {\n  spans              = true\n  roots              = true\n  processes          = true\n  span_attributes = [ \"http.method\", \"http.target\", \"http.status_code\" ]\n  output {\n    logs = [otelcol.exporter.otlphttp.default.input]\n  }\n}\n\n// OTLP Exporter to send traces to Tempo.\notelcol.exporter.otlphttp \"default\" {\n  client {\n    auth = otelcol.auth.headers.tempo.handler\n    endpoint = \"http://singletempo.monitoring.svc.cluster.local:4318\"\n    tls {\n      insecure             = true\n      insecure_skip_verify = true\n    }\n  }\n}\n\notelcol.auth.headers \"tempo\" {\n    header {\n        key = \"Authorization\"\n        value = \"testkeyhere\"\n    }\n}\n\n\ndiscovery.kubernetes \"pods\" {\n  role = \"pod\"\n}\n\nloki.source.kubernetes \"pods\" {\n  targets    = discovery.kubernetes.pods.targets\n  forward_to = [loki.write.local.receiver]\n}\n\n\n\nlocal.file_match \"local_files\" {\n     path_targets = [{\"__path__\" = \"/var/log/*.log\"}]\n     sync_period = \"5s\"\n}\n\nloki.source.file \"log_scrape\" {\n    targets    = local.file_match.local_files.targets\n    forward_to = [loki.process.filter_logs.receiver]\n    tail_from_end = true\n}\n\nloki.process \"filter_logs\" {\n    stage.drop {\n        source = \"\"\n        expression  = \".*Connection closed by authenticating user root\"\n        drop_counter_reason = \"noisy\"\n      }\n    forward_to = [loki.write.local.receiver]\n}\n\n\notelcol.connector.spanlogs \"lokispan\" {\n  spans              = true\n  roots              = true\n  processes          = true\n  labels             = [\"http.method\", \"http.target\"]\n  span_attributes = [\"http.method\", \"http.target\"]\n\n\n  output {\n    logs = [otelcol.exporter.loki.default.input]\n  }\n}\n\n\notelcol.exporter.loki \"default\" {\n  forward_to = [loki.write.local.receiver]\n}\n\nloki.write \"local\" {\n  endpoint {\n    url = \"http://loki-gateway.monitoring.svc.cluster.local/loki/api/v1/push\"\n  }\n}\n\n\n\n\n"},"kind":"ConfigMap","metadata":{"annotations":{},"creationTimestamp":null,"name":"grafana-alloy","namespace":"georgetestapp"}}
+  creationTimestamp: "2024-10-27T23:30:11Z"
+  name: grafana-alloy
+  namespace: georgetestapp
+  resourceVersion: "40630329"
+  uid: 2d2c989b-1836-4455-81ce-204564358910
