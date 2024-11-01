@@ -63,11 +63,9 @@ func NewAsyncWriter(filePath string, bufferSize int) (*AsyncWriter, error) {
 		for data := range aw.ch {
 			_, err := writer.Write(data)
 			if err != nil {
-				// Handle write error, e.g., log to main logger
 				logger.Errorf("AsyncWriter failed to write data: %v", err)
 			}
 		}
-		// Flush any remaining data
 		if err := writer.Flush(); err != nil {
 			logger.Errorf("AsyncWriter failed to flush data: %v", err)
 		}
@@ -84,7 +82,6 @@ func (aw *AsyncWriter) Write(p []byte) (n int, err error) {
 	case aw.ch <- p:
 		return len(p), nil
 	default:
-		// Buffer is full; drop the log or handle accordingly
 		return 0, fmt.Errorf("AsyncWriter buffer is full")
 	}
 }
@@ -98,12 +95,8 @@ func (aw *AsyncWriter) Close() {
 func initMetrics() {
 	logger.Debug("Initializing Prometheus metrics...")
 	prometheus.MustRegister(requestCount)
-	logger.Debug("Registered requestCount metric")
 	prometheus.MustRegister(errorCount)
-	logger.Debug("Registered errorCount metric")
 	prometheus.MustRegister(latencyMetric)
-	logger.Debug("Registered latencyMetric")
-
 	logger.Info("Prometheus metrics initialized")
 }
 
@@ -112,7 +105,6 @@ func initTracing() {
 
 	ctx := context.Background()
 
-	// Use the ALLOY_LOG_ENDPOINT environment variable with a default value
 	alloyEndpoint := os.Getenv("ALLOY_LOG_ENDPOINT")
 	if alloyEndpoint == "" {
 		alloyEndpoint = "http://grafana-alloy.georgetestapp.svc.cluster.local:12345"
@@ -122,21 +114,19 @@ func initTracing() {
 	exporter, err := otlptracehttp.New(ctx,
 		otlptracehttp.WithEndpoint(alloyEndpoint),
 		otlptracehttp.WithInsecure(),
-		otlptracehttp.WithTimeout(20*time.Second), // Add a timeout to ensure delivery
+		otlptracehttp.WithTimeout(20*time.Second),
 	)
 	if err != nil {
 		logger.Fatalf("Failed to create trace exporter: %v", err)
 	}
 
-	// Resource attributes to identify the service
 	attrs := []attribute.KeyValue{
 		attribute.String("service.name", "georgetestapp"),
 		attribute.String("environment", "test"),
 	}
 
-	// Create TracerProvider with the configured exporter
 	tp := sdktrace.NewTracerProvider(
-		sdktrace.WithSampler(sdktrace.AlwaysSample()), // Sample all traces for testing
+		sdktrace.WithSampler(sdktrace.AlwaysSample()),
 		sdktrace.WithBatcher(exporter),
 		sdktrace.WithResource(resource.NewWithAttributes(
 			semconv.SchemaURL,
@@ -144,7 +134,6 @@ func initTracing() {
 		)),
 	)
 
-	// Set the TracerProvider globally
 	otel.SetTracerProvider(tp)
 	tracer = tp.Tracer("georgetestapp")
 
@@ -156,9 +145,6 @@ func main() {
 
 	logger.Info("Starting initialization...")
 	initMetrics()
-	logger.Debug("Metrics initialized successfully")
-
-	// Initialize traffic logger
 	trafficLogger = logrus.New()
 	trafficLogger.SetFormatter(&logrus.JSONFormatter{})
 	trafficLogger.SetLevel(logrus.InfoLevel)
@@ -173,14 +159,11 @@ func main() {
 	trafficLogger.SetOutput(asyncWriter)
 
 	initTracing()
-	logger.Debug("Tracing initialized successfully")
-
 	http.HandleFunc("/", handleRequest)
 	http.Handle("/metrics", promhttp.Handler())
 
 	go simulateTraffic()
-	go continuousLogTraceToLokiAndTempo() // Start continuous logging and tracing with association
-	logger.Debug("Traffic simulation and continuous logging/tracing to Loki and Tempo started")
+	go continuousLogTraceToLokiAndTempo()
 
 	logger.Info("Starting server on port 8080")
 	if err := http.ListenAndServe(":8080", nil); err != nil {
@@ -188,11 +171,21 @@ func main() {
 	}
 }
 
+// Helper to extract traceID from context
+func getTraceID(ctx context.Context) string {
+	span := trace.SpanFromContext(ctx)
+	if span != nil {
+		return span.SpanContext().TraceID().String()
+	}
+	return ""
+}
+
 func handleRequest(w http.ResponseWriter, r *http.Request) {
-	_, span := tracer.Start(r.Context(), "handleRequest")
+	ctx, span := tracer.Start(r.Context(), "handleRequest")
 	defer span.End()
 
-	// Simulate latency
+	traceID := getTraceID(ctx)
+
 	latency := time.Duration(rand.Intn(300)) * time.Millisecond
 	time.Sleep(latency)
 
@@ -205,30 +198,25 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	span.SetAttributes(attribute.String("userId", userID))
 
-	// Debugging Information
 	logger.WithFields(logrus.Fields{
 		"endpoint":  "/",
 		"userId":    userID,
 		"latency":   latency.Seconds(),
 		"requestID": strconv.Itoa(rand.Intn(1000000)),
+		"traceID":   traceID,
 	}).Info("Request handled successfully")
 }
 
 func simulateTraffic() {
 	for {
-		// Stable traffic: 10 requests per second
 		for i := 0; i < 10; i++ {
 			go simulateRequest(false)
 		}
 		time.Sleep(1 * time.Second)
-
-		// Error burst for 3 seconds
 		for j := 0; j < 3; j++ {
 			go simulateRequest(true)
 			time.Sleep(1 * time.Second)
 		}
-
-		// Latency spike for 5 seconds
 		for k := 0; k < 5; k++ {
 			go simulateRequest(false)
 			time.Sleep(1 * time.Second)
@@ -243,13 +231,15 @@ func simulateRequest(causeError bool) {
 	client := &http.Client{}
 	resp, err := client.Do(req)
 
-	// Log request info to the traffic logger
+	traceID := getTraceID(req.Context())
+
 	if causeError || err != nil || (resp != nil && resp.StatusCode >= 400) {
 		errorCount.Inc()
 		trafficLogger.WithFields(logrus.Fields{
 			"endpoint": "/",
 			"userId":   req.Header.Get("UserID"),
 			"status":   "error",
+			"traceID":  traceID,
 			"reason":   err,
 		}).Error("Simulated error occurred")
 	} else {
@@ -257,10 +247,12 @@ func simulateRequest(causeError bool) {
 			"endpoint": "/",
 			"userId":   req.Header.Get("UserID"),
 			"status":   "success",
+			"traceID":  traceID,
 		}).Info("Simulated successful request")
 	}
 }
 
+// continuousLogTraceToLokiAndTempo sends associated logs and traces to Loki and Tempo
 // continuousLogTraceToLokiAndTempo sends associated logs and traces to Loki and Tempo
 func continuousLogTraceToLokiAndTempo() {
 	tempoURL := "http://singletempo.monitoring.svc.cluster.local:4318/v1/traces"
@@ -269,9 +261,17 @@ func continuousLogTraceToLokiAndTempo() {
 	for {
 		// Generate trace and span IDs
 		traceID := fmt.Sprintf("%032X", rand.Int63())
-		spanID := fmt.Sprintf("%016X", rand.Int31())
+		rootSpanID := fmt.Sprintf("%016X", rand.Int31())
+		childSpanID1 := fmt.Sprintf("%016X", rand.Int31())
+		childSpanID2 := fmt.Sprintf("%016X", rand.Int31())
 
-		// Create trace payload for Tempo
+		// Determine status code (1 in 5 is 500, otherwise 200)
+		statusCode := 200
+		if rand.Intn(5) == 0 {
+			statusCode = 500
+		}
+
+		// Create multi-layer trace payload for Tempo
 		tracePayload := map[string]interface{}{
 			"resourceSpans": []map[string]interface{}{
 				{
@@ -292,18 +292,73 @@ func continuousLogTraceToLokiAndTempo() {
 								"version": "1.0.0",
 							},
 							"spans": []map[string]interface{}{
+								// Root span
 								{
 									"traceId":           traceID,
-									"spanId":            spanID,
-									"name":              "Continuous Span",
-									"startTimeUnixNano": time.Now().Add(-1 * time.Second).UnixNano(),
+									"spanId":            rootSpanID,
+									"name":              "handleRequest",
+									"startTimeUnixNano": time.Now().Add(-3 * time.Second).UnixNano(),
 									"endTimeUnixNano":   time.Now().UnixNano(),
-									"kind":              2,
+									"kind":              1, // SERVER
 									"attributes": []map[string]interface{}{
 										{
-											"key": "custom.span.attribute",
+											"key": "service.name",
 											"value": map[string]interface{}{
-												"stringValue": "Example span attribute",
+												"stringValue": "georgetestapp",
+											},
+										},
+										{
+											"key": "http.status_code",
+											"value": map[string]interface{}{
+												"intValue": statusCode,
+											},
+										},
+									},
+								},
+								// First child span
+								{
+									"traceId":           traceID,
+									"spanId":            childSpanID1,
+									"parentSpanId":      rootSpanID,
+									"name":              "processRequest",
+									"startTimeUnixNano": time.Now().Add(-2 * time.Second).UnixNano(),
+									"endTimeUnixNano":   time.Now().Add(-1 * time.Second).UnixNano(),
+									"kind":              2, // INTERNAL
+									"attributes": []map[string]interface{}{
+										{
+											"key": "task",
+											"value": map[string]interface{}{
+												"stringValue": "processRequest",
+											},
+										},
+										{
+											"key": "http.status_code",
+											"value": map[string]interface{}{
+												"intValue": statusCode,
+											},
+										},
+									},
+								},
+								// Second child span
+								{
+									"traceId":           traceID,
+									"spanId":            childSpanID2,
+									"parentSpanId":      childSpanID1,
+									"name":              "subProcess1",
+									"startTimeUnixNano": time.Now().Add(-1 * time.Second).UnixNano(),
+									"endTimeUnixNano":   time.Now().Add(-500 * time.Millisecond).UnixNano(),
+									"kind":              2, // INTERNAL
+									"attributes": []map[string]interface{}{
+										{
+											"key": "task",
+											"value": map[string]interface{}{
+												"stringValue": "subProcess1",
+											},
+										},
+										{
+											"key": "http.status_code",
+											"value": map[string]interface{}{
+												"intValue": statusCode,
 											},
 										},
 									},
@@ -318,18 +373,18 @@ func continuousLogTraceToLokiAndTempo() {
 		// Send trace to Tempo
 		sendJSON(tracePayload, tempoURL)
 
-		// Create log payload for Loki with associated trace ID and service name label
+		// Create log payload for Loki with associated trace ID, service name, and status code
 		logEntry := map[string]interface{}{
 			"streams": []map[string]interface{}{
 				{
 					"stream": map[string]string{
-						"service_name": "georgetestapp", // Consistent label for querying
-						"traceID":      traceID,         // Label for trace association
+						"service_name": "georgetestapp",
+						"status_code":  strconv.Itoa(statusCode), // Include status code in logs
 					},
 					"values": [][]string{
 						{
 							fmt.Sprintf("%d", time.Now().UnixNano()),
-							fmt.Sprintf("Example log message from georgetestapp with trace ID: %s", traceID),
+							fmt.Sprintf("Example log message from georgetestapp with traceID=%s | X-B3-TraceId: %s | Status: %d", traceID, traceID, statusCode),
 						},
 					},
 				},

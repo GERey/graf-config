@@ -30,7 +30,7 @@ spec:
         command: ["/app/startup.sh"] # Ensure it uses the startup script
         env:
         - name: ALLOY_LOG_ENDPOINT
-          value: "grafana-alloy.georgetestapp.svc.cluster.local:4318"
+          value: "alloy.georgetestapp.svc.cluster.local"
         resources:
           requests:
             memory: "512Mi"

@@ -1,41 +1,5 @@
-global:
-  logLevel: "debug"
-otelCollector:
-  enabled: true
-  service:
-    type: ClusterIP
-    port: 4318  # Ensure the port is aligned with OTLP settings for traces and metrics
-  config:
-    receivers:
-      filelog:
-        include: ["/var/log/georgetestapp.log"] # Path to the log file from your Go application
-      otlp:
-        protocols:
-          grpc:
-          http:
-    processors:
-      batch:
-        timeout: 5s
-    exporters:
-      loki:
-        endpoint: "http://loki-gateway.monitoring.svc.cluster.local/loki/api/v1/push"
-        labels:
-          service_name: "georgetestapp"
-          environment: "test"
-          log_level: "info"
-      otlp/tempo:
-        client:
-          endpoint: "http://singletempo.monitoring.svc.cluster.local:4317"
-          tls:
-            insecure: true
-            insecure_skip_verify: true
-    service:
-      pipelines:
-        logs:
-          receivers: [filelog]  # Use filelog receiver for application logs
-          processors: [batch]
-          exporters: [loki]
-        traces:
-          receivers: [otlp]  # OTLP receiver for trace data
-          processors: [batch]
-          exporters: [otlp/tempo]
+alloy:
+  configMap:
+    create: false
+    name: alloy-config
+    key: config.alloy
